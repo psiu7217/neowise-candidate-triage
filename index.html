@@ -18,18 +18,66 @@
     <textarea id="message" rows="4"></textarea>
     <button type="submit">Разобрать заявку</button>
   </form>
-  <pre id="result" aria-live="polite"></pre>
+  <p id="status" role="status"></p>
+  <section id="result" aria-labelledby="result-title" hidden>
+    <h2 id="result-title">Черновик ответа</h2>
+    <p>Тема — <strong id="topic"></strong></p>
+    <pre id="draft"></pre>
+  </section>
   <script type="module">
     const form = document.querySelector("form");
+    const message = document.querySelector("#message");
+    const status = document.querySelector("#status");
     const result = document.querySelector("#result");
+    const topic = document.querySelector("#topic");
+    const draft = document.querySelector("#draft");
+    const topicLabels = new Map([
+      ["delivery", "Доставка"],
+      ["pricing", "Стоимость"],
+      ["other", "Другое"],
+    ]);
+    const manualReviewMessage = "Черновик не готов. Разберите заявку вручную.";
+    let latestRequestId = 0;
+
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
-      const reply = await fetch("/api/triage", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: document.querySelector("#message").value }),
-      });
-      result.textContent = JSON.stringify(await reply.json(), null, 2);
+      const requestId = ++latestRequestId;
+      const text = message.value;
+      topic.textContent = "";
+      draft.textContent = "";
+      result.hidden = true;
+
+      if (!text.trim()) {
+        status.textContent = "Введите текст заявки.";
+        message.focus();
+        return;
+      }
+
+      status.textContent = "Разбираем заявку…";
+      try {
+        const reply = await fetch("/api/triage", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text }),
+        });
+        const body = await reply.json();
+        if (requestId !== latestRequestId) return;
+
+        const topicLabel = topicLabels.get(body?.topic);
+        const draftText = typeof body?.draft === "string" ? body.draft.trim() : "";
+        if (reply.ok && body?.status === "ready" && topicLabel && draftText) {
+          topic.textContent = topicLabel;
+          draft.textContent = draftText;
+          result.hidden = false;
+          status.textContent = "Черновик готов. Проверьте его перед отправкой клиенту.";
+        } else if (reply.status === 400 && body?.status === "invalid_input") {
+          status.textContent = "Введите текст заявки.";
+        } else {
+          status.textContent = manualReviewMessage;
+        }
+      } catch {
+        if (requestId === latestRequestId) status.textContent = manualReviewMessage;
+      }
     });
   </script>
 </body>
